@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
 from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import RectangleObject
 import glob
 import os
 import re
 
-def extract_page_number(filename):
-    """Estrae il numero di pagina dal nome del file (l'ultimo numero)"""
+def extract_last_3_digits(filename):
+    """Estrae le ultime 3 cifre dal nome del file"""
     base = os.path.splitext(filename)[0]
     numbers = re.findall(r'\d+', base)
     if numbers:
-        return int(numbers[-1])
+        last_num = numbers[-1]
+        return last_num[-3:] if len(last_num) >= 3 else last_num.zfill(3)
     return None
 
-def crop_pdf_by_filename(input_file, writer):
-    """Ritaglia il PDF in base al numero finale del nome file e aggiunge al writer"""
+def crop_pdf(input_file, output_file):
+    """Ritaglia il PDF in base al numero finale del nome file e salva individualmente"""
     reader = PdfReader(input_file)
-    
-    final_num = extract_page_number(os.path.basename(input_file))
-    
-    if final_num is None:
+    writer = PdfWriter()
+
+    final_num_str = extract_last_3_digits(os.path.basename(input_file))
+
+    if final_num_str is None:
         print(f"⚠ Attenzione: {input_file} non ha numeri nel nome, salto il file")
-        return 0
-    
+        return False
+
+    final_num = int(final_num_str)
     is_odd = final_num % 2 == 1
-    pages_added = 0
-    
+
     for page in reader.pages:
-        # Crea una COPIA della pagina
         new_page = writer.add_page(page)
-        
+
         if is_odd:
             # File con numero dispari - bordo in ALTO
             new_page.mediabox.lower_left = (35, 0)
@@ -38,64 +38,56 @@ def crop_pdf_by_filename(input_file, writer):
             # File con numero pari - bordo in BASSO
             new_page.mediabox.lower_left = (0, 100)
             new_page.mediabox.upper_right = (520, 830)
-        
-        pages_added += 1
-    
-    print(f"✓ Processato {input_file} ({'dispari' if is_odd else 'pari'}) - {pages_added} pagine")
-    return pages_added
 
-def merge_all_pdfs():
-    """Unisce tutti i PDF nella cartella corrente"""
-    pdf_files = sorted(glob.glob("*.pdf"))
-    
+    with open(output_file, "wb") as output:
+        writer.write(output)
+
+    print(f"✓ Processato {os.path.basename(input_file)} → {os.path.basename(output_file)} ({'dispari' if is_odd else 'pari'})")
+    return True
+
+def process_all_pdfs():
+    """Processa tutti i PDF dalla directory di input alla directory di output"""
+    input_dir = os.getenv("INPUT_DIR")
+    output_dir = os.getenv("OUTPUT_DIR")
+
+    if not input_dir:
+        print("✗ Errore: variabile d'ambiente INPUT_DIR non impostata")
+        return
+
+    if not output_dir:
+        print("✗ Errore: variabile d'ambiente OUTPUT_DIR non impostata")
+        return
+
+    if not os.path.exists(input_dir):
+        print(f"✗ Errore: la directory di input '{input_dir}' non esiste")
+        return
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"✓ Creata directory di output: {output_dir}")
+
+    pdf_files = sorted(glob.glob(os.path.join(input_dir, "*.pdf")))
+
     if not pdf_files:
-        print("Nessun file PDF trovato nella cartella corrente")
+        print(f"Nessun file PDF trovato in {input_dir}")
         return
-    
-    # Estrai i numeri di pagina per determinare il nome del file output
-    page_numbers = []
-    for pdf_file in pdf_files:
-        page_num = extract_page_number(pdf_file)
-        if page_num is not None:
-            page_numbers.append(page_num)
-    
-    if not page_numbers:
-        print("Nessun file con numeri di pagina trovato")
-        return
-    
-    first_page = min(page_numbers)
-    last_page = max(page_numbers)
-    output_filename = f"{first_page}-{last_page}.pdf"
-    
-    # Rimuovi il file di output se esiste nella lista
-    if output_filename in pdf_files:
-        pdf_files.remove(output_filename)
-    
-    print(f"\nTrovati {len(pdf_files)} file PDF:")
-    for f in pdf_files:
-        print(f"  - {f}")
-    print(f"\nFile output: {output_filename}")
-    print()
-    
-    writer = PdfWriter()
-    total_pages = 0
-    
+
+    print(f"\nTrovati {len(pdf_files)} file PDF in {input_dir}\n")
+
+    processed = 0
     for pdf_file in pdf_files:
         try:
-            pages_added = crop_pdf_by_filename(pdf_file, writer)
-            total_pages += pages_added
+            last_3_digits = extract_last_3_digits(os.path.basename(pdf_file))
+            if last_3_digits:
+                output_filename = f"{last_3_digits}.pdf"
+                output_path = os.path.join(output_dir, output_filename)
+
+                if crop_pdf(pdf_file, output_path):
+                    processed += 1
         except Exception as e:
-            print(f"✗ Errore nel processare {pdf_file}: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    if total_pages > 0:
-        with open(output_filename, "wb") as output:
-            writer.write(output)
-        print(f"\n✓ PDF finale salvato: {output_filename}")
-        print(f"  Totale pagine: {total_pages}")
-    else:
-        print("\nNessuna pagina da salvare")
+            print(f"✗ Errore nel processare {os.path.basename(pdf_file)}: {e}")
+
+    print(f"\n✓ Completato: {processed}/{len(pdf_files)} file processati")
 
 if __name__ == "__main__":
-    merge_all_pdfs()
+    process_all_pdfs()
